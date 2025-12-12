@@ -8,11 +8,11 @@ Aquí tienes el archivo `README.md` actualizado, incluyendo las cuatro imágenes
 
 Este proyecto forma parte del **Trabajo Final de Máster en Blockchain**. Tienes **5 opciones de proyectos de trazabilidad** para elegir:
 
-1.  **TFM 1:** Trazabilidad Alimentaria con Blockchain
-2.  **TFM 2:** Trazabilidad Logística con Blockchain
-3.  **TFM 3:** Trazabilidad Industrial y Certificaciones con Blockchain
-4.  **TFM 4:** Certificación Académica Digital con Blockchain
-5.  **TFM 5:** Energía Renovable y Certificados Verdes con Blockchain
+1.  **[TFM 1: Trazabilidad Alimentaria con Blockchain](./TFM%201%20Trazabilidad%20Alimentaria%20con%20Blockchain%202bf0249c79f78094a6d4cbe2186367d6.md)**
+2.  **[TFM 2: Trazabilidad Logística con Blockchain](./TFM%202%20Trazabilidad%20Log%C3%ADstica%20con%20Blockchain%202bf0249c79f7809595f1f31914e423f6.md)**
+3.  **[TFM 3: Trazabilidad Industrial y Certificaciones con Blockchain](./TFM%203%20Trazabilidad%20Industrial%20y%20Certificaciones%20co%202bf0249c79f78014b080da0447e5f009.md)**
+4.  **[TFM 4: Certificación Académica Digital con Blockchain](./TFM%204%20Certificaci%C3%B3n%20Acad%C3%A9mica%20Digital%20con%20Blockcha%202bf0249c79f78086969fc4a76e23288b.md)**
+5.  **[TFM 5: Energía Renovable y Certificados Verdes con Blockchain](./TFM%205%20Energ%C3%ADa%20Renovable%20y%20Certificados%20Verdes%20con%20%202bf0249c79f78037b0b7d9102ec81108.md)**
 
 Este README proporciona una guía técnica para implementar el proyecto usando **Supply Chain Tracker** como base de referencia. Consulta los documentos específicos de cada TFM para más detalles sobre cada opción.
 
