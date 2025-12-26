@@ -5,3 +5,11 @@ libs = ["lib"]
 
 [rpc_endpoints]
 anvil = "http://localhost:8545"
+
+[profile.default]
+# Configuración para scripts de despliegue
+sender = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"  # Primera cuenta de Anvil
+# Optimizaciones agresivas para reducir el tamaño del contrato
+optimizer = true
+optimizer_runs = 10000  # Más optimizaciones = menor tamaño de bytecode
+via_ir = false

@@ -1,10 +1,38 @@
 "use client"
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useWallet } from '../hooks/useWallet'
+import { getContractReadOnly } from '../lib/contract'
 
 export default function Header() {
   const { account, connect, disconnect } = useWallet()
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [isCheckingAdmin, setIsCheckingAdmin] = useState(false)
+
+  useEffect(() => {
+    if (account) {
+      checkAdminStatus()
+    } else {
+      setIsAdmin(false)
+    }
+  }, [account])
+
+  const checkAdminStatus = async () => {
+    setIsCheckingAdmin(true)
+    try {
+      const contract = await getContractReadOnly()
+      const isAdminResult = await contract.isAdmin(account || '')
+      setIsAdmin(isAdminResult)
+    } catch (error) {
+      console.error('Error al verificar admin:', error)
+      // Fallback: verificar si es la cuenta que desplegó el contrato
+      const adminAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+      setIsAdmin(account?.toLowerCase() === adminAddress.toLowerCase())
+    } finally {
+      setIsCheckingAdmin(false)
+    }
+  }
+
   return (
     <header style={{
       display: 'flex',
@@ -26,7 +54,9 @@ export default function Header() {
             <Link href="/events" style={{ textDecoration: 'none', color: '#666', padding: '8px 12px', borderRadius: '4px' }}>Eventos</Link>
             <Link href="/certificates" style={{ textDecoration: 'none', color: '#666', padding: '8px 12px', borderRadius: '4px' }}>Certificados</Link>
             <Link href="/actors" style={{ textDecoration: 'none', color: '#666', padding: '8px 12px', borderRadius: '4px' }}>Actores</Link>
-            <Link href="/admin/users" style={{ textDecoration: 'none', color: '#ef4444', padding: '8px 12px', borderRadius: '4px', fontWeight: '500' }}>Admin</Link>
+            {isAdmin && (
+              <Link href="/admin/users" style={{ textDecoration: 'none', color: '#ef4444', padding: '8px 12px', borderRadius: '4px', fontWeight: '500' }}>Admin</Link>
+            )}
           </nav>
         )}
       </div>

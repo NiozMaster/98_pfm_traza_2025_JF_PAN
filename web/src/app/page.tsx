@@ -9,11 +9,52 @@ export default function Page() {
   const [isRegistering, setIsRegistering] = useState(false)
 
   const handleRegister = async (name: string, role: string, location: string) => {
+    if (!account) {
+      alert('Por favor conecta tu wallet primero')
+      return
+    }
+    
     setIsRegistering(true)
     try {
-      // TODO: Integrar con smart contract
-      console.log('Registrando actor:', { name, role, location })
-      alert('Actor registrado exitosamente. Esperando aprobación del administrador.')
+      console.log('Registrando actor:', { name, role, location, account })
+      
+      // Crear nuevo actor
+      const newActor = {
+        address: account,
+        name: name,
+        role: role,
+        location: location,
+        isActive: true
+      }
+      
+      // Cargar actores existentes
+      const savedActors = localStorage.getItem('sc:actors')
+      let actorsList: any[] = []
+      
+      if (savedActors) {
+        try {
+          actorsList = JSON.parse(savedActors)
+        } catch (e) {
+          console.error('Error al parsear actores guardados:', e)
+        }
+      }
+      
+      // Verificar si el actor ya existe (por dirección)
+      const existingActor = actorsList.find(a => a.address.toLowerCase() === account.toLowerCase())
+      if (existingActor) {
+        alert('Ya existe un actor registrado con esta dirección de wallet')
+        setIsRegistering(false)
+        return
+      }
+      
+      // Agregar nuevo actor
+      actorsList.push(newActor)
+      
+      // Guardar en localStorage
+      localStorage.setItem('sc:actors', JSON.stringify(actorsList))
+      
+      console.log('Actor registrado exitosamente:', newActor)
+      alert('Actor registrado exitosamente. Puedes verlo en la sección de Actores.')
     } catch (error) {
       console.error('Error al registrar:', error)
       alert('Error al registrar actor')

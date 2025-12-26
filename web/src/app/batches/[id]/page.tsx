@@ -7,6 +7,7 @@ import CertificateCard from '../../../components/CertificateCard'
 import EventForm from '../../../components/EventForm'
 import CertificateForm from '../../../components/CertificateForm'
 import { useParams, useRouter } from 'next/navigation'
+import { getContract } from '../../../lib/contract'
 
 interface Batch {
   id: number
@@ -116,17 +117,58 @@ export default function BatchDetailPage() {
   }
 
   const handleEventSubmit = async (eventType: string, location: string, metadata: string) => {
+    if (!account) {
+      alert('Por favor conecta tu wallet')
+      return
+    }
+
     setIsSubmitting(true)
     try {
-      // TODO: Integrar con smart contract
-      console.log('Registrando evento:', { batchId, eventType, location, metadata })
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      alert('Evento registrado exitosamente')
+      console.log('Registrando evento en blockchain:', { batchId, eventType, location, metadata })
+      
+      const contract = await getContract()
+      
+      // Llamar a la función del smart contract para registrar el evento
+      const tx = await contract.recordBatchEvent(
+        batchId,
+        eventType,
+        location,
+        metadata || ''
+      )
+      
+      console.log('Transacción enviada:', tx.hash)
+      alert('Transacción enviada. Esperando confirmación...')
+      
+      // Esperar la confirmación
+      const receipt = await tx.wait()
+      console.log('Transacción confirmada:', receipt)
+      
+      alert('Evento registrado exitosamente en la blockchain')
       setActiveTab('timeline')
-      loadBatchData()
-    } catch (error) {
+      
+      // Recargar datos después de un breve delay para permitir propagación
+      setTimeout(() => {
+        loadBatchData()
+      }, 1000)
+    } catch (error: any) {
       console.error('Error al registrar evento:', error)
-      alert('Error al registrar evento')
+      let errorMessage = 'Error al registrar evento'
+      
+      if (error.message) {
+        if (error.message.includes('User not registered')) {
+          errorMessage = 'Usuario no registrado. Por favor regístrate primero.'
+        } else if (error.message.includes('User not approved')) {
+          errorMessage = 'Usuario no aprobado. Espera la aprobación del administrador.'
+        } else if (error.message.includes('Token not found')) {
+          errorMessage = 'Lote no encontrado en la blockchain.'
+        } else if (error.message.includes('user rejected')) {
+          errorMessage = 'Transacción rechazada por el usuario'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+      
+      alert(errorMessage)
     } finally {
       setIsSubmitting(false)
     }
