@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react'
 import Header from '../../components/Header'
 import { useWallet } from '../../hooks/useWallet'
 import Link from 'next/link'
+import { getContractReadOnly } from '../../lib/contract'
 
 export default function DashboardPage() {
   const { account } = useWallet()
@@ -12,19 +13,132 @@ export default function DashboardPage() {
     pendingEvents: 0,
     validCertificates: 0
   })
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     if (account) {
-      // TODO: Cargar estadísticas desde el smart contract
-      // Por ahora valores de ejemplo
+      loadStats()
+    } else {
       setStats({
-        totalBatches: 12,
-        myBatches: 5,
-        pendingEvents: 3,
-        validCertificates: 8
+        totalBatches: 0,
+        myBatches: 0,
+        pendingEvents: 0,
+        validCertificates: 0
       })
+      setIsLoading(false)
     }
   }, [account])
+
+  const loadStats = async () => {
+    setIsLoading(true)
+    try {
+      const contract = await getContractReadOnly()
+      
+      if (!account) {
+        setStats({
+          totalBatches: 0,
+          myBatches: 0,
+          pendingEvents: 0,
+          validCertificates: 0
+        })
+        return
+      }
+
+      // Cargar todas las estadísticas en paralelo con mejor manejo de errores
+      console.log('🔄 Llamando funciones del contrato...')
+      
+      const [
+        totalBatches,
+        myBatches,
+        pendingEvents,
+        validCertificates
+      ] = await Promise.all([
+        // Total de lotes (tokens)
+        contract.getTotalTokens().catch((e: any) => {
+          console.error('❌ Error en getTotalTokens:', e.message)
+          return BigInt(0)
+        }),
+        // Mis lotes (tokens del usuario)
+        contract.getAllUserTokens(account).catch((e: any) => {
+          console.error('❌ Error en getAllUserTokens:', e.message)
+          // Intentar con getUserTokens como fallback
+          return contract.getUserTokens(account).catch(() => {
+            console.error('❌ Error en getUserTokens (fallback)')
+            return []
+          })
+        }).then((tokens: any) => {
+          const count = Array.isArray(tokens) ? tokens.length : 0
+          console.log(`✅ Mis lotes: ${count}`)
+          return count
+        }),
+        // Eventos pendientes (transfers pendientes)
+        contract.getPendingTransfers(account).catch((e: any) => {
+          console.error('❌ Error en getPendingTransfers:', e.message)
+          return []
+        }).then((transfers: any) => {
+          const count = Array.isArray(transfers) ? transfers.length : 0
+          console.log(`✅ Eventos pendientes: ${count}`)
+          return count
+        }),
+        // Certificados válidos (tokens válidos)
+        contract.getValidTokensCount().catch((e: any) => {
+          console.error('❌ Error en getValidTokensCount:', e.message)
+          return BigInt(0)
+        })
+      ])
+
+      console.log('📈 Estadísticas cargadas:', {
+        totalBatches: Number(totalBatches),
+        myBatches: myBatches,
+        pendingEvents: pendingEvents,
+        validCertificates: Number(validCertificates)
+      })
+
+      setStats({
+        totalBatches: Number(totalBatches),
+        myBatches: myBatches,
+        pendingEvents: pendingEvents,
+        validCertificates: Number(validCertificates)
+      })
+    } catch (error: any) {
+      console.error('Error al cargar estadísticas:', error)
+      // Si hay error, intentar con funciones alternativas
+      try {
+        const contract = await getContractReadOnly()
+        
+        // Fallback: usar funciones que existen en versiones anteriores
+        let myBatches = 0
+        try {
+          const userTokens = await contract.getAllUserTokens(account)
+          myBatches = userTokens.length
+        } catch (e) {
+          try {
+            const userTokens = await contract.getUserTokens(account)
+            myBatches = userTokens.length
+          } catch (e2) {
+            console.error('No se pudo obtener mis lotes:', e2)
+          }
+        }
+
+        setStats({
+          totalBatches: 0,
+          myBatches: myBatches,
+          pendingEvents: 0,
+          validCertificates: 0
+        })
+      } catch (fallbackError) {
+        console.error('Error en fallback:', fallbackError)
+        setStats({
+          totalBatches: 0,
+          myBatches: 0,
+          pendingEvents: 0,
+          validCertificates: 0
+        })
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   if (!account) {
     return (
@@ -68,47 +182,57 @@ export default function DashboardPage() {
         </div>
 
         {/* Estadísticas */}
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '20px',
-          marginBottom: '40px'
-        }}>
-          {statCards.map((stat, index) => (
-            <Link key={index} href={stat.link} style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div style={{
-                backgroundColor: '#fff',
-                border: '1px solid #e5e7eb',
-                borderRadius: '12px',
-                padding: '24px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                transition: 'transform 0.2s',
-                cursor: 'pointer'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-4px)'
-                e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)'
-                e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'
-              }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                  <span style={{ fontSize: '32px' }}>{stat.icon}</span>
-                  <div>
-                    <p style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: stat.color }}>
-                      {stat.value}
-                    </p>
-                    <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#666' }}>
-                      {stat.label}
-                    </p>
+        {isLoading ? (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '40px 20px',
+            marginBottom: '40px'
+          }}>
+            <p style={{ color: '#666', fontSize: '16px' }}>Cargando estadísticas...</p>
+          </div>
+        ) : (
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: '20px',
+            marginBottom: '40px'
+          }}>
+            {statCards.map((stat, index) => (
+              <Link key={index} href={stat.link} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div style={{
+                  backgroundColor: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '12px',
+                  padding: '24px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                  transition: 'transform 0.2s',
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-4px)'
+                  e.currentTarget.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)'
+                  e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)'
+                }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '32px' }}>{stat.icon}</span>
+                    <div>
+                      <p style={{ margin: 0, fontSize: '32px', fontWeight: '700', color: stat.color }}>
+                        {stat.value}
+                      </p>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#666' }}>
+                        {stat.label}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+              </Link>
+            ))}
+          </div>
+        )}
 
         {/* Acciones Rápidas */}
         <div style={{ marginBottom: '40px' }}>

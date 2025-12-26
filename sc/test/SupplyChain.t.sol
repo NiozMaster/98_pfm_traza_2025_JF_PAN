@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "forge-std/Test.sol";
-import "../src/SupplyChain.sol";
+import {Test} from "forge-std/Test.sol";
+import {SupplyChain} from "../src/SupplyChain.sol";
 
 contract SupplyChainTest is Test {
     SupplyChain sc;

@@ -1,6 +1,7 @@
 "use client"
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import AnvilAccountsHelper from '../components/AnvilAccountsHelper'
+import { getContract, getContractReadOnly } from '../lib/contract'
 
 type Web3State = {
   account: string | null;
@@ -237,10 +238,92 @@ export default function Web3Provider({ children }: { children: React.ReactNode }
   const [showAccountSelector, setShowAccountSelector] = useState(false)
   const [availableAccounts, setAvailableAccounts] = useState<string[]>([])
 
+  // Función para manejar la conexión de cuenta y registro automático
+  const handleAccountConnection = async (accountAddress: string) => {
+    setAccount(accountAddress)
+    localStorage.setItem('sc:account', accountAddress)
+    
+    // Verificar y registrar automáticamente al usuario si no está registrado
+    try {
+      const contract = await getContractReadOnly()
+      let isRegistered = false
+      
+      try {
+        isRegistered = await contract.isUserRegistered(accountAddress)
+      } catch (checkError: any) {
+        console.error('Error al verificar registro:', checkError)
+        // Si falla la verificación, asumir que no está registrado e intentar registrar
+        isRegistered = false
+      }
+      
+      if (!isRegistered) {
+        // Usuario no registrado, registrarlo automáticamente
+        console.log('Usuario no registrado, registrando automáticamente...')
+        try {
+          const contractWithSigner = await getContract()
+          // Registrar con rol "Producer" por defecto
+          // El usuario puede cambiar su rol más tarde si es necesario
+          const tx = await contractWithSigner.requestUserRole('Producer')
+          console.log('Transacción de registro enviada:', tx.hash)
+          const receipt = await tx.wait()
+          console.log('Usuario registrado automáticamente con rol Producer. Receipt:', receipt)
+          
+          // Verificar que el registro fue exitoso
+          await new Promise(resolve => setTimeout(resolve, 1000)) // Esperar propagación
+          const verifyRegistered = await contract.isUserRegistered(accountAddress)
+          if (verifyRegistered) {
+            console.log('✅ Registro verificado exitosamente')
+          } else {
+            console.warn('⚠️ Registro completado pero verificación falló. Puede necesitar esperar.')
+          }
+        } catch (registerError: any) {
+          // Si el error es que ya está registrado, verificar de nuevo
+          if (registerError.message && registerError.message.includes('User already requested')) {
+            console.log('Usuario ya estaba registrado')
+            // Verificar de nuevo para estar seguros
+            try {
+              const verifyRegistered = await contract.isUserRegistered(accountAddress)
+              if (verifyRegistered) {
+                console.log('✅ Usuario confirmado como registrado')
+              }
+            } catch (e) {
+              console.error('Error al verificar después de "already requested":', e)
+            }
+          } else {
+            console.error('❌ Error al registrar usuario automáticamente:', registerError)
+            console.error('Detalles del error:', {
+              message: registerError.message,
+              code: registerError.code,
+              data: registerError.data
+            })
+            // Mostrar un mensaje más visible al usuario
+            if (registerError.message && !registerError.message.includes('user rejected')) {
+              console.warn('⚠️ No se pudo registrar automáticamente. El usuario necesitará ser registrado por un administrador.')
+            }
+          }
+        }
+      } else {
+        console.log('✅ Usuario ya está registrado')
+      }
+    } catch (error: any) {
+      console.error('❌ Error al verificar registro de usuario:', error)
+      console.error('Detalles:', {
+        message: error.message,
+        code: error.code
+      })
+      // No bloquear la conexión si hay error, solo loguear
+    }
+  }
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('sc:account')
-      if (stored) setAccount(stored)
+      if (stored) {
+        // Verificar y registrar automáticamente si hay cuenta guardada
+        handleAccountConnection(stored).catch(error => {
+          console.error('Error al verificar cuenta guardada:', error)
+        })
+      }
       
       if ((window as any).ethereum) {
         // Listener para cambios de cuentas (cuando se importan nuevas o se cambian)
@@ -254,8 +337,7 @@ export default function Web3Provider({ children }: { children: React.ReactNode }
             // Si hay cuentas, obtener todas las disponibles
             const allAccounts = await getAllAccounts()
             if (allAccounts.length > 0) {
-              setAccount(allAccounts[0])
-              localStorage.setItem('sc:account', allAccounts[0])
+              await handleAccountConnection(allAccounts[0])
               // Si hay múltiples cuentas, actualizar la lista del selector
               if (allAccounts.length > 1) {
                 setAvailableAccounts(allAccounts)
@@ -360,8 +442,7 @@ export default function Web3Provider({ children }: { children: React.ReactNode }
 
       // Si solo hay una cuenta, conectar directamente
       if (accounts.length === 1) {
-        setAccount(accounts[0])
-        localStorage.setItem('sc:account', accounts[0])
+        await handleAccountConnection(accounts[0])
         return
       }
 
@@ -378,9 +459,8 @@ export default function Web3Provider({ children }: { children: React.ReactNode }
     }
   }
 
-  function handleAccountSelect(selectedAccount: string) {
-    setAccount(selectedAccount)
-    localStorage.setItem('sc:account', selectedAccount)
+  async function handleAccountSelect(selectedAccount: string) {
+    await handleAccountConnection(selectedAccount)
     setShowAccountSelector(false)
     setAvailableAccounts([])
   }

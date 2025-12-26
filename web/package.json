@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "generate-config": "node ./scripts/generate-config.js",
+    "update-abi": "node ./scripts/update-abi.js",
+    "dev": "npm run update-abi && npm run generate-config && next dev",
+    "build": "npm run update-abi && npm run generate-config && next build",
     "start": "next start",
     "lint": "next lint"
   },

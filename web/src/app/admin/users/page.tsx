@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react'
 import Header from '../../../components/Header'
 import { useWallet } from '../../../hooks/useWallet'
+import { getContract, getContractReadOnly } from '../../../lib/contract'
 
 interface User {
   id: number
@@ -19,48 +20,179 @@ export default function AdminUsersPage() {
   const [newUserAddress, setNewUserAddress] = useState('')
   const [newUserRole, setNewUserRole] = useState('Producer')
   const [isRegistering, setIsRegistering] = useState(false)
+  const [approvingUser, setApprovingUser] = useState<string | null>(null)
+  const [rejectingUser, setRejectingUser] = useState<string | null>(null)
 
   useEffect(() => {
     if (account) {
       checkAdminStatus()
       loadUsers()
+    } else {
+      setUsers([])
+      setIsLoading(false)
     }
   }, [account])
 
+  // Recargar cuando la página vuelve a estar visible (útil después de transacciones)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && account && isAdmin) {
+        loadUsers()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [account, isAdmin])
+
   const checkAdminStatus = async () => {
     try {
-      // TODO: Llamar a isAdmin() del smart contract
-      // Por ahora, verificar si es la cuenta que desplegó el contrato
-      // En producción, esto debe venir del contrato
-      const adminAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" // Primera cuenta de Anvil
-      setIsAdmin(account?.toLowerCase() === adminAddress.toLowerCase())
+      if (!account) {
+        setIsAdmin(false)
+        return
+      }
+      const contract = await getContractReadOnly()
+      const isAdminResult = await contract.isAdmin(account)
+      setIsAdmin(isAdminResult)
     } catch (error) {
       console.error('Error al verificar admin:', error)
-      setIsAdmin(false)
+      // Fallback: verificar si es la cuenta que desplegó el contrato
+      const adminAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+      setIsAdmin(account?.toLowerCase() === adminAddress.toLowerCase())
     }
   }
 
   const loadUsers = async () => {
     setIsLoading(true)
     try {
-      // TODO: Cargar usuarios desde el smart contract
-      // Datos de ejemplo
-      setUsers([
-        {
-          id: 1,
-          userAddress: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
-          role: 'Producer',
-          status: 'Approved'
-        },
-        {
-          id: 2,
-          userAddress: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC',
-          role: 'Processor',
-          status: 'Pending'
+      const contract = await getContractReadOnly()
+      
+      console.log('Obteniendo usuarios desde el blockchain...')
+      
+      let usersList: any[] = []
+      
+      // Intentar usar getAllUsers primero, pero si falla usar método alternativo
+      let useAlternativeMethod = false
+      
+      try {
+        // Verificar si la función existe en el contrato
+        if (contract.getAllUsers && typeof contract.getAllUsers === 'function') {
+          try {
+            // Intentar llamar con un timeout y manejo de errores silencioso
+            usersList = await Promise.race([
+              contract.getAllUsers(),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout')), 5000)
+              )
+            ]) as any[]
+            console.log(`Usuarios obtenidos con getAllUsers: ${usersList.length}`)
+          } catch (callError: any) {
+            // Si la llamada falla (execution reverted o timeout), usar método alternativo
+            // No loguear el error completo para evitar spam en Anvil
+            if (callError.message && !callError.message.includes('Timeout')) {
+              console.log('getAllUsers no disponible en el contrato desplegado, usando método alternativo...')
+            } else {
+              console.log('Timeout al llamar getAllUsers, usando método alternativo...')
+            }
+            useAlternativeMethod = true
+          }
+        } else {
+          useAlternativeMethod = true
         }
-      ])
-    } catch (error) {
+      } catch (error: any) {
+        // Error al verificar la función, usar método alternativo
+        useAlternativeMethod = true
+      }
+      
+      // Método alternativo: iterar sobre usuarios usando el mapping público users
+      if (useAlternativeMethod) {
+        console.log('Usando método alternativo para obtener usuarios (iterando sobre users mapping)...')
+        
+        // El mapping users es público, así que podemos acceder a users(id)
+        // Primero intentar obtener nextUserId si está disponible
+        let maxUsers = 1000
+        try {
+          const nextUserId = await contract.nextUserId()
+          maxUsers = Number(nextUserId) + 10 // Agregar un buffer
+          console.log(`nextUserId encontrado: ${maxUsers}`)
+        } catch (e) {
+          console.log('nextUserId no disponible, usando rango por defecto')
+        }
+        
+        const foundUsers: any[] = []
+        let consecutiveNotFound = 0
+        const maxConsecutiveNotFound = 20 // Aumentar el umbral
+        
+        for (let i = 1; i <= maxUsers; i++) {
+          try {
+            const user = await contract.users(i)
+            // Verificar si el usuario existe (id != 0)
+            if (user && Number(user.id) !== 0) {
+              foundUsers.push(user)
+              consecutiveNotFound = 0
+            } else {
+              consecutiveNotFound++
+              // Si encontramos muchos usuarios consecutivos que no existen, probablemente no hay más
+              if (consecutiveNotFound >= maxConsecutiveNotFound) {
+                console.log(`Deteniendo búsqueda después de ${maxConsecutiveNotFound} usuarios consecutivos no encontrados`)
+                break
+              }
+            }
+          } catch (e: any) {
+            consecutiveNotFound++
+            // Si el error es que el usuario no existe, continuar
+            if (consecutiveNotFound >= maxConsecutiveNotFound) {
+              break
+            }
+          }
+        }
+        
+        usersList = foundUsers
+        console.log(`Usuarios obtenidos con método alternativo: ${usersList.length}`)
+      }
+      
+      if (!usersList || usersList.length === 0) {
+        console.log('No se encontraron usuarios')
+        setUsers([])
+        return
+      }
+      
+      // Mapear los usuarios del contrato al formato del frontend
+      const mappedUsers = usersList.map((user: any) => {
+        // UserStatus: 0 = Pending, 1 = Approved, 2 = Rejected, 3 = Canceled
+        const statusMap: Record<number, string> = {
+          0: 'Pending',
+          1: 'Approved',
+          2: 'Rejected',
+          3: 'Canceled'
+        }
+        
+        const mappedUser = {
+          id: Number(user.id),
+          userAddress: user.userAddress,
+          role: user.role,
+          status: statusMap[Number(user.status)] || 'Pending'
+        }
+        
+        console.log('Usuario mapeado:', mappedUser)
+        return mappedUser
+      })
+      
+      console.log(`Total usuarios mapeados: ${mappedUsers.length}`)
+      setUsers(mappedUsers)
+    } catch (error: any) {
       console.error('Error al cargar usuarios:', error)
+      console.error('Detalles del error:', {
+        message: error.message,
+        code: error.code,
+        data: error.data,
+        stack: error.stack
+      })
+      
+      // Si hay error, intentar mantener los usuarios actuales
+      console.warn('Error al cargar usuarios')
     } finally {
       setIsLoading(false)
     }
@@ -74,53 +206,155 @@ export default function AdminUsersPage() {
 
     setIsRegistering(true)
     try {
-      // TODO: Llamar a registerUserByAdmin() del smart contract
-      console.log('Registrando usuario:', {
-        address: newUserAddress,
-        role: newUserRole,
-        status: 'Approved'
-      })
+      const contract = await getContract()
       
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      // UserStatus: 0 = Pending, 1 = Approved, 2 = Rejected, 3 = Canceled
+      // Registrar con estado Approved (1)
+      const statusApproved = 1
       
-      alert('Usuario registrado exitosamente')
+      // Llamar a registerUserByAdmin() del smart contract
+      const tx = await contract.registerUserByAdmin(
+        newUserAddress,
+        newUserRole,
+        statusApproved
+      )
+      
+      // Guardar la dirección antes de limpiar
+      const createdUserAddress = newUserAddress
+      
+      // Esperar confirmación
+      const receipt = await tx.wait()
+      console.log('Transacción confirmada:', receipt)
+      console.log('Bloque confirmado:', receipt.blockNumber)
+      
+      // Esperar un momento para que el estado se propague en el blockchain
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      // Limpiar el formulario
       setNewUserAddress('')
       setNewUserRole('Producer')
       setShowRegisterForm(false)
-      loadUsers()
-    } catch (error) {
+      
+      // Recargar usuarios para mostrar el nuevo
+      console.log('Recargando lista de usuarios después de crear usuario...')
+      await loadUsers()
+      console.log('Lista de usuarios recargada')
+      
+      // Verificar que el usuario se agregó
+      try {
+        const contractReadOnly = await getContractReadOnly()
+        const userInfo = await contractReadOnly.getUserInfo(createdUserAddress)
+        console.log('Usuario verificado después de crear:', userInfo)
+      } catch (e) {
+        console.log('Usuario aún no visible (puede tardar un momento):', e)
+      }
+      
+      alert('Usuario registrado exitosamente en blockchain')
+    } catch (error: any) {
       console.error('Error al registrar usuario:', error)
-      alert('Error al registrar usuario')
+      let errorMessage = 'Error al registrar usuario'
+      
+      if (error.message) {
+        if (error.message.includes('User already registered')) {
+          errorMessage = 'Este usuario ya está registrado'
+        } else if (error.message.includes('Only admin')) {
+          errorMessage = 'Solo los administradores pueden registrar usuarios'
+        } else if (error.message.includes('user rejected')) {
+          errorMessage = 'Transacción rechazada por el usuario'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+      
+      alert(errorMessage)
     } finally {
       setIsRegistering(false)
     }
   }
 
   const handleApproveUser = async (userAddress: string) => {
+    setApprovingUser(userAddress)
     try {
-      // TODO: Llamar a changeStatusUser() del smart contract
-      console.log('Aprobando usuario:', userAddress)
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      alert('Usuario aprobado')
-      loadUsers()
-    } catch (error) {
+      const contract = await getContract()
+      
+      // UserStatus: 0 = Pending, 1 = Approved, 2 = Rejected, 3 = Canceled
+      const statusApproved = 1
+      
+      console.log(`Aprobando usuario ${userAddress}...`)
+      const tx = await contract.changeStatusUser(userAddress, statusApproved)
+      console.log('Transacción enviada:', tx.hash)
+      
+      await tx.wait()
+      console.log('Usuario aprobado exitosamente')
+      
+      // Esperar un momento para que el estado se propague
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      alert('✅ Usuario aprobado exitosamente en blockchain')
+      await loadUsers()
+    } catch (error: any) {
       console.error('Error al aprobar usuario:', error)
-      alert('Error al aprobar usuario')
+      let errorMessage = 'Error al aprobar usuario'
+      
+      if (error.message) {
+        if (error.message.includes('Only admin')) {
+          errorMessage = 'Solo los administradores pueden aprobar usuarios'
+        } else if (error.message.includes('user rejected')) {
+          errorMessage = 'Transacción rechazada por el usuario'
+        } else if (error.message.includes('User not found')) {
+          errorMessage = 'Usuario no encontrado en el sistema'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+      
+      alert(errorMessage)
+    } finally {
+      setApprovingUser(null)
     }
   }
 
   const handleRejectUser = async (userAddress: string) => {
     if (!confirm('¿Estás seguro de rechazar este usuario?')) return
     
+    setRejectingUser(userAddress)
     try {
-      // TODO: Llamar a changeStatusUser() del smart contract
-      console.log('Rechazando usuario:', userAddress)
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      alert('Usuario rechazado')
-      loadUsers()
-    } catch (error) {
+      const contract = await getContract()
+      
+      // UserStatus: 0 = Pending, 1 = Approved, 2 = Rejected, 3 = Canceled
+      const statusRejected = 2
+      
+      console.log(`Rechazando usuario ${userAddress}...`)
+      const tx = await contract.changeStatusUser(userAddress, statusRejected)
+      console.log('Transacción enviada:', tx.hash)
+      
+      await tx.wait()
+      console.log('Usuario rechazado exitosamente')
+      
+      // Esperar un momento para que el estado se propague
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      alert('❌ Usuario rechazado exitosamente en blockchain')
+      await loadUsers()
+    } catch (error: any) {
       console.error('Error al rechazar usuario:', error)
-      alert('Error al rechazar usuario')
+      let errorMessage = 'Error al rechazar usuario'
+      
+      if (error.message) {
+        if (error.message.includes('Only admin')) {
+          errorMessage = 'Solo los administradores pueden rechazar usuarios'
+        } else if (error.message.includes('user rejected')) {
+          errorMessage = 'Transacción rechazada por el usuario'
+        } else if (error.message.includes('User not found')) {
+          errorMessage = 'Usuario no encontrado en el sistema'
+        } else {
+          errorMessage = `Error: ${error.message}`
+        }
+      }
+      
+      alert(errorMessage)
+    } finally {
+      setRejectingUser(null)
     }
   }
 
@@ -199,21 +433,39 @@ export default function AdminUsersPage() {
               Administra usuarios y roles del sistema
             </p>
           </div>
-          <button
-            onClick={() => setShowRegisterForm(!showRegisterForm)}
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '16px',
-              fontWeight: '500',
-              cursor: 'pointer'
-            }}
-          >
-            {showRegisterForm ? '✕ Cancelar' : '➕ Registrar Nuevo Usuario'}
-          </button>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button
+              onClick={loadUsers}
+              disabled={isLoading}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: isLoading ? '#9ca3af' : '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '500',
+                cursor: isLoading ? 'not-allowed' : 'pointer'
+              }}
+            >
+              🔄 {isLoading ? 'Cargando...' : 'Recargar'}
+            </button>
+            <button
+              onClick={() => setShowRegisterForm(!showRegisterForm)}
+              style={{
+                padding: '12px 24px',
+                backgroundColor: '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '500',
+                cursor: 'pointer'
+              }}
+            >
+              {showRegisterForm ? '✕ Cancelar' : '➕ Registrar Nuevo Usuario'}
+            </button>
+          </div>
         </div>
 
         {showRegisterForm && (
@@ -354,38 +606,74 @@ export default function AdminUsersPage() {
                       </span>
                     </td>
                     <td style={{ padding: '12px' }}>
-                      <div style={{ display: 'flex', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {user.status === 'Pending' && (
                           <>
                             <button
                               onClick={() => handleApproveUser(user.userAddress)}
+                              disabled={approvingUser === user.userAddress || rejectingUser === user.userAddress}
                               style={{
                                 padding: '6px 12px',
-                                backgroundColor: '#10b981',
+                                backgroundColor: approvingUser === user.userAddress ? '#9ca3af' : '#10b981',
                                 color: 'white',
                                 border: 'none',
                                 borderRadius: '6px',
                                 fontSize: '12px',
-                                cursor: 'pointer'
+                                cursor: approvingUser === user.userAddress ? 'not-allowed' : 'pointer',
+                                opacity: approvingUser === user.userAddress ? 0.6 : 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
                               }}
                             >
-                              Aprobar
+                              {approvingUser === user.userAddress ? (
+                                <>⏳ Aprobando...</>
+                              ) : (
+                                <>✅ Aprobar</>
+                              )}
                             </button>
                             <button
                               onClick={() => handleRejectUser(user.userAddress)}
+                              disabled={rejectingUser === user.userAddress || approvingUser === user.userAddress}
                               style={{
                                 padding: '6px 12px',
-                                backgroundColor: '#ef4444',
+                                backgroundColor: rejectingUser === user.userAddress ? '#9ca3af' : '#ef4444',
                                 color: 'white',
                                 border: 'none',
                                 borderRadius: '6px',
                                 fontSize: '12px',
-                                cursor: 'pointer'
+                                cursor: rejectingUser === user.userAddress ? 'not-allowed' : 'pointer',
+                                opacity: rejectingUser === user.userAddress ? 0.6 : 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
                               }}
                             >
-                              Rechazar
+                              {rejectingUser === user.userAddress ? (
+                                <>⏳ Rechazando...</>
+                              ) : (
+                                <>❌ Rechazar</>
+                              )}
                             </button>
                           </>
+                        )}
+                        {user.status === 'Approved' && (
+                          <span style={{ 
+                            fontSize: '12px', 
+                            color: '#10b981',
+                            fontStyle: 'italic'
+                          }}>
+                            ✓ Aprobado
+                          </span>
+                        )}
+                        {user.status === 'Rejected' && (
+                          <span style={{ 
+                            fontSize: '12px', 
+                            color: '#ef4444',
+                            fontStyle: 'italic'
+                          }}>
+                            ✗ Rechazado
+                          </span>
                         )}
                       </div>
                     </td>

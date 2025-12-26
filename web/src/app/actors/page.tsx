@@ -29,31 +29,49 @@ export default function ActorsPage() {
   const loadActors = async () => {
     setIsLoading(true)
     try {
-      // TODO: Cargar actores desde el smart contract
-      // Datos de ejemplo
-      setActors([
-        {
-          address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0',
-          name: 'Finca El Roble',
-          role: 'Producer',
-          location: 'Colombia',
-          isActive: true
-        },
-        {
-          address: '0x8ba1f109551bD432803012645Hac136c22C9',
-          name: 'Procesadora Central',
-          role: 'Processor',
-          location: 'Bogotá, Colombia',
-          isActive: true
-        },
-        {
-          address: '0x1234567890123456789012345678901234567890',
-          name: 'Transportes Rápidos',
-          role: 'Transporter',
-          location: 'Colombia',
-          isActive: true
+      // Cargar actores desde localStorage
+      const savedActors = localStorage.getItem('sc:actors')
+      let actorsList: Actor[] = []
+      
+      if (savedActors) {
+        try {
+          actorsList = JSON.parse(savedActors)
+        } catch (e) {
+          console.error('Error al parsear actores guardados:', e)
         }
-      ])
+      }
+      
+      // Si no hay actores guardados, usar datos de ejemplo iniciales
+      if (actorsList.length === 0) {
+        actorsList = [
+          {
+            address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0',
+            name: 'Finca El Roble',
+            role: 'Producer',
+            location: 'Colombia',
+            isActive: true
+          },
+          {
+            address: '0x8ba1f109551bD432803012645Hac136c22C9',
+            name: 'Procesadora Central',
+            role: 'Processor',
+            location: 'Bogotá, Colombia',
+            isActive: true
+          },
+          {
+            address: '0x1234567890123456789012345678901234567890',
+            name: 'Transportes Rápidos',
+            role: 'Transporter',
+            location: 'Colombia',
+            isActive: true
+          }
+        ]
+        // Guardar los datos iniciales
+        localStorage.setItem('sc:actors', JSON.stringify(actorsList))
+      }
+      
+      setActors(actorsList)
+      console.log(`Cargados ${actorsList.length} actores`)
     } catch (error) {
       console.error('Error al cargar actores:', error)
     } finally {
@@ -67,13 +85,55 @@ export default function ActorsPage() {
   }
 
   const handleRegister = async (name: string, role: string, location: string) => {
+    if (!account) {
+      alert('Por favor conecta tu wallet primero')
+      return
+    }
+    
     setIsRegistering(true)
     try {
-      // TODO: Integrar con smart contract
-      console.log('Registrando actor:', { name, role, location })
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      console.log('Registrando actor:', { name, role, location, account })
+      
+      // Crear nuevo actor
+      const newActor: Actor = {
+        address: account,
+        name: name,
+        role: role,
+        location: location,
+        isActive: true
+      }
+      
+      // Cargar actores existentes
+      const savedActors = localStorage.getItem('sc:actors')
+      let actorsList: Actor[] = []
+      
+      if (savedActors) {
+        try {
+          actorsList = JSON.parse(savedActors)
+        } catch (e) {
+          console.error('Error al parsear actores guardados:', e)
+        }
+      }
+      
+      // Verificar si el actor ya existe (por dirección)
+      const existingActor = actorsList.find(a => a.address.toLowerCase() === account.toLowerCase())
+      if (existingActor) {
+        alert('Ya existe un actor registrado con esta dirección de wallet')
+        setIsRegistering(false)
+        return
+      }
+      
+      // Agregar nuevo actor
+      actorsList.push(newActor)
+      
+      // Guardar en localStorage
+      localStorage.setItem('sc:actors', JSON.stringify(actorsList))
+      
+      console.log('Actor registrado exitosamente:', newActor)
       alert('Actor registrado exitosamente')
-      loadActors()
+      
+      // Recargar la lista
+      await loadActors()
     } catch (error) {
       console.error('Error al registrar actor:', error)
       alert('Error al registrar actor')
@@ -85,10 +145,29 @@ export default function ActorsPage() {
   const handleDeactivate = async (address: string) => {
     if (!confirm('¿Estás seguro de desactivar este actor?')) return
     try {
-      // TODO: Integrar con smart contract (solo admin)
       console.log('Desactivando actor:', address)
+      
+      // Cargar actores existentes
+      const savedActors = localStorage.getItem('sc:actors')
+      if (!savedActors) {
+        alert('No se encontraron actores')
+        return
+      }
+      
+      let actorsList: Actor[] = JSON.parse(savedActors)
+      
+      // Actualizar el estado del actor
+      actorsList = actorsList.map(actor => 
+        actor.address.toLowerCase() === address.toLowerCase()
+          ? { ...actor, isActive: false }
+          : actor
+      )
+      
+      // Guardar en localStorage
+      localStorage.setItem('sc:actors', JSON.stringify(actorsList))
+      
       alert('Actor desactivado')
-      loadActors()
+      await loadActors()
     } catch (error) {
       console.error('Error al desactivar actor:', error)
       alert('Error al desactivar actor')
@@ -142,10 +221,33 @@ export default function ActorsPage() {
           marginBottom: '40px'
         }}>
           <div>
-            <h1 style={{ fontSize: '32px', marginBottom: '8px' }}>Actores</h1>
-            <p style={{ color: '#666', fontSize: '16px', marginBottom: '32px' }}>
-              Gestiona los actores registrados en el sistema de trazabilidad
-            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
+              <div>
+                <h1 style={{ fontSize: '32px', marginBottom: '8px' }}>Actores</h1>
+                <p style={{ color: '#666', fontSize: '16px' }}>
+                  Gestiona los actores registrados en el sistema de trazabilidad
+                </p>
+              </div>
+              <button
+                onClick={loadActors}
+                disabled={isLoading}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: isLoading ? '#9ca3af' : '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                🔄 {isLoading ? 'Cargando...' : 'Recargar'}
+              </button>
+            </div>
           </div>
           <div>
             <ActorForm onSubmit={handleRegister} isLoading={isRegistering} />
